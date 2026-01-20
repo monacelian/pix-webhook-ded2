@@ -20,25 +20,29 @@ def get_db():
     return psycopg2.connect(DATABASE_URL)
 
 def init_db():
-    conn = get_db()
-    cur = conn.cursor()
-    # Cria tabela se não existir
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS pix_notifications (
-            id SERIAL PRIMARY KEY,
-            payment_id VARCHAR(50) UNIQUE NOT NULL,
-            email VARCHAR(255),
-            status VARCHAR(20) NOT NULL,
-            amount NUMERIC(10,2),
-            created_at TIMESTAMP,
-            expires_at TIMESTAMP,
-            webhook_received BOOLEAN DEFAULT FALSE
-        )
-    """)
-    conn.commit()
-    cur.close()
-    conn.close()
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS pix_notifications (
+                id SERIAL PRIMARY KEY,
+                payment_id VARCHAR(50) UNIQUE NOT NULL,
+                email VARCHAR(255),
+                status VARCHAR(20) NOT NULL,
+                amount NUMERIC(10,2),
+                created_at TIMESTAMP,
+                expires_at TIMESTAMP,
+                webhook_received BOOLEAN DEFAULT FALSE
+            )
+        """)
+        conn.commit()
+        cur.close()
+        conn.close()
+        print("✅ Banco inicializado")
+    except Exception as e:
+        print("⚠️ Erro ao inicializar banco:", e)
 
+# Inicializa o banco, mas não trava o servidor se falhar
 init_db()
 
 # ========================
@@ -64,6 +68,18 @@ def gerar_pix():
     created_at = datetime.datetime.utcnow()
     expires_at = created_at + datetime.timedelta(days=30)
 
+    # Responder para extensão imediatamente
+    response = {
+        "message": "Tentativa de pagamento registrada",
+        "payment_id": payment_id,
+        "email": email,
+        "status": status,
+        "amount": amount,
+        "created_at": created_at.isoformat(),
+        "expires_at": expires_at.isoformat()
+    }
+
+    # Gravação no banco em try/except para não travar
     try:
         conn = get_db()
         cur = conn.cursor()
@@ -76,17 +92,9 @@ def gerar_pix():
         cur.close()
         conn.close()
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        print("⚠️ Erro ao gravar tentativa de pagamento no banco:", e)
 
-    return jsonify({
-        "message": "Tentativa de pagamento registrada",
-        "payment_id": payment_id,
-        "email": email,
-        "status": status,
-        "amount": amount,
-        "created_at": created_at.isoformat(),
-        "expires_at": expires_at.isoformat()
-    })
+    return jsonify(response)
 
 # ========================
 # WEBHOOK DO MERCADO PAGO
@@ -97,14 +105,12 @@ def webhook():
     if not data:
         return jsonify({"error": "Nenhum dado recebido"}), 400
 
-    # Exemplo de dados do Mercado Pago
-    # data['type'] == "payment"
-    # data['data']['id'] == payment_id do Mercado Pago
+    print("📢 Webhook recebido:", data)
 
     payment_id = str(data.get("data", {}).get("id", ""))
-    status_mp = data.get("action", "unknown")  # Ex: 'payment.updated'
+    status_mp = data.get("action", "unknown")  # ex: 'payment.updated'
 
-    # Atualizar status no banco se o payment_id existir
+    # Atualiza banco em try/except para não travar
     try:
         conn = get_db()
         cur = conn.cursor()
@@ -117,10 +123,10 @@ def webhook():
         cur.close()
         conn.close()
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        print("⚠️ Erro ao atualizar webhook no banco:", e)
 
-    print("Webhook recebido:", data)
-    return jsonify({"status": "ok"}), 200
+    # Sempre retorna 200 rápido para o Mercado Pago
+    return "", 200
 
 # ========================
 # LISTAR PIX (teste)
