@@ -43,7 +43,10 @@ def init_db():
         print("⚠️ Erro ao inicializar banco:", e)
 
 # Inicializa o banco, mas não trava o servidor se falhar
-init_db()
+try:
+    init_db()
+except Exception as e:
+    print("⚠️ Banco indisponível na inicialização:", e)
 
 # ========================
 # ROTA DE TESTE
@@ -53,13 +56,13 @@ def ping():
     return jsonify({"status": "ok", "message": "Servidor online"})
 
 # ========================
-# GERAR PIX (registro da tentativa)
+# GERAR PIX (resposta imediata e gravação segura)
 # ========================
 @app.route("/gerar_pix", methods=["GET"])
 def gerar_pix():
     email = request.args.get("email")
     if not email:
-        return jsonify({"error": "Email não fornecido"}), 400
+        return jsonify({"error": "Email obrigatório"}), 400
 
     # Criar ID único para pagamento
     payment_id = str(uuid.uuid4())[:8]
@@ -68,7 +71,7 @@ def gerar_pix():
     created_at = datetime.datetime.utcnow()
     expires_at = created_at + datetime.timedelta(days=30)
 
-    # Responder para extensão imediatamente
+    # Resposta imediata para a extensão
     response = {
         "message": "Tentativa de pagamento registrada",
         "payment_id": payment_id,
