@@ -1,1 +1,4 @@
-web: python app.py
+flask
+requests
+gunicorn
+psycopg2-binary
