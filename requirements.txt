@@ -3,6 +3,10 @@ gunicorn
 psycopg2-binary
 mercadopago
 flask-cors
+qrcode[pil]
+requests
+python-dotenv
+
 
 
 
