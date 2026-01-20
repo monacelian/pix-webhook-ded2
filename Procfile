@@ -1,4 +1,1 @@
-flask
-requests
-gunicorn
-psycopg2-binary
+web: gunicorn app:app
