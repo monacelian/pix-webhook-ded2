@@ -1,22 +1,23 @@
+from flask import Flask, request, jsonify
+from flask_cors import CORS
+
+app = Flask(__name__)
+CORS(app)  # libera comunicação CORS com a extensão
+
 @app.route("/gerar_pix")
 def gerar_pix():
     email = request.args.get("email")
     if not email:
         return jsonify({"error": "Email não fornecido"}), 400
 
-    payment_data = {
-        "transaction_amount": 1.0,
-        "description": "Pagamento de teste",
-        "payment_method_id": "pix",
-        "payer": {"email": email}
-    }
+    # Aqui você coloca a lógica do Mercado Pago
+    return jsonify({"link_pix": "PIX_DE_TESTE", "valor": 5.0})
 
-    payment_response = mp.payment().create(payment_data)
-    if payment_response["status"] != 201:
-        return jsonify({"error": payment_response}), 500
+@app.route("/webhook", methods=["POST"])
+def webhook():
+    data = request.json
+    print("Recebi webhook:", data)
+    return "OK", 200
 
-    pix_info = payment_response["response"]["point_of_interaction"]["transaction_data"]
-    return jsonify({
-        "link_pix": pix_info.get("qr_code"),
-        "valor": 1.0
-    })
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=8080)
