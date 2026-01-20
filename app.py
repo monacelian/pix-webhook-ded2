@@ -1,170 +1,78 @@
-import os
-import psycopg2
-from flask import Flask, request, jsonify
-from flask_cors import CORS
-import datetime
-import uuid
+console.log("📘 Extensão DedMais Pix fixa ativa");
 
-# ========================
-# CONFIGURAÇÃO DO FLASK
-# ========================
-app = Flask(__name__)
-CORS(app)  # libera comunicação CORS com a extensão
+// ------------------ CRIAR CONTAINER FIXO ------------------
+function criarPixContainer() {
+  if (document.getElementById("pix-container")) return;
 
-# ========================
-# BANCO DE DADOS
-# ========================
-DATABASE_URL = "postgresql://postgres:wxMkqvcRPlDGJiwSeDPluMioymuhpiuU@containers-us-west-123.railway.app:5432/railway"
+  const container = document.createElement("div");
+  container.id = "pix-container";
+  container.style.cssText = `
+    position: fixed;
+    top: 10px;
+    right: 10px;
+    background: #f5f5f5;
+    padding: 10px 14px;
+    border: 1px solid #ccc;
+    border-radius: 6px;
+    z-index: 9999;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+    font-family: sans-serif;
+  `;
 
-def get_db():
-    return psycopg2.connect(DATABASE_URL)
+  const input = document.createElement("input");
+  input.id = "input-email-pix";
+  input.placeholder = "Digite seu email";
+  input.style.cssText = `
+    padding: 4px 8px;
+    border-radius: 4px;
+    border: 1px solid #ccc;
+    width: 180px;
+  `;
 
-def init_db():
-    try:
-        conn = get_db()
-        cur = conn.cursor()
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS pix_notifications (
-                id SERIAL PRIMARY KEY,
-                payment_id VARCHAR(50) UNIQUE NOT NULL,
-                email VARCHAR(255),
-                status VARCHAR(20) NOT NULL,
-                amount NUMERIC(10,2),
-                created_at TIMESTAMP,
-                expires_at TIMESTAMP,
-                webhook_received BOOLEAN DEFAULT FALSE
-            )
-        """)
-        conn.commit()
-        cur.close()
-        conn.close()
-        print("✅ Banco inicializado")
-    except Exception as e:
-        print("⚠️ Erro ao inicializar banco:", e)
+  const btn = document.createElement("button");
+  btn.id = "btn-validar-pix";
+  btn.textContent = "Gerar Pix 1 real";
+  btn.style.cssText = `
+    margin-left: 6px;
+    padding: 4px 10px;
+    border-radius: 4px;
+    background: #1976d2;
+    color: white;
+    font-weight: bold;
+    cursor: pointer;
+    border: none;
+  `;
 
-# Inicializa o banco, mas não trava o servidor se falhar
-try:
-    init_db()
-except Exception as e:
-    print("⚠️ Banco indisponível na inicialização:", e)
+  container.appendChild(input);
+  container.appendChild(btn);
+  document.body.appendChild(container);
 
-# ========================
-# ROTA DE TESTE
-# ========================
-@app.route("/ping", methods=["GET"])
-def ping():
-    return jsonify({"status": "ok", "message": "Servidor online"})
-
-# ========================
-# GERAR PIX (resposta imediata e gravação segura)
-# ========================
-@app.route("/gerar_pix", methods=["GET"])
-def gerar_pix():
-    email = request.args.get("email")
-    if not email:
-        return jsonify({"error": "Email obrigatório"}), 400
-
-    # Criar ID único para pagamento
-    payment_id = str(uuid.uuid4())[:8]
-    amount = 5.0
-    status = "pending"
-    created_at = datetime.datetime.utcnow()
-    expires_at = created_at + datetime.timedelta(days=30)
-
-    # Resposta imediata para a extensão
-    response = {
-        "message": "Tentativa de pagamento registrada",
-        "payment_id": payment_id,
-        "email": email,
-        "status": status,
-        "amount": amount,
-        "created_at": created_at.isoformat(),
-        "expires_at": expires_at.isoformat()
+  btn.onclick = async () => {
+    const email = input.value.trim();
+    if (!email) {
+      alert("Digite um email!");
+      return;
     }
 
-    # Gravação no banco em try/except para não travar
-    try:
-        conn = get_db()
-        cur = conn.cursor()
-        cur.execute("""
-            INSERT INTO pix_notifications
-            (payment_id, email, status, amount, created_at, expires_at)
-            VALUES (%s, %s, %s, %s, %s, %s)
-        """, (payment_id, email, status, amount, created_at, expires_at))
-        conn.commit()
-        cur.close()
-        conn.close()
-    except Exception as e:
-        print("⚠️ Erro ao gravar tentativa de pagamento no banco:", e)
+    btn.textContent = "Gerando...";
+    try {
+      const resp = await fetch(`https://web-production-dc4e3.up.railway.app/gerar_pix?email=${encodeURIComponent(email)}`);
+      const json = await resp.json();
 
-    return jsonify(response)
+      if (json.link_pix) {
+        alert(`✅ Pix gerado: R$${json.valor}`);
+        window.open(json.link_pix, "_blank");
+      } else {
+        alert("❌ Não foi possível gerar Pix");
+      }
+    } catch (e) {
+      console.error(e);
+      alert("Erro na comunicação com o servidor");
+    } finally {
+      btn.textContent = "Gerar Pix 1 real";
+    }
+  };
+}
 
-# ========================
-# WEBHOOK DO MERCADO PAGO
-# ========================
-@app.route("/webhook", methods=["POST"])
-def webhook():
-    data = request.json
-    if not data:
-        return jsonify({"error": "Nenhum dado recebido"}), 400
-
-    print("📢 Webhook recebido:", data)
-
-    payment_id = str(data.get("data", {}).get("id", ""))
-    status_mp = data.get("action", "unknown")  # ex: 'payment.updated'
-
-    # Atualiza banco em try/except para não travar
-    try:
-        conn = get_db()
-        cur = conn.cursor()
-        cur.execute("""
-            UPDATE pix_notifications
-            SET status = %s, webhook_received = TRUE
-            WHERE payment_id = %s
-        """, (status_mp, payment_id))
-        conn.commit()
-        cur.close()
-        conn.close()
-    except Exception as e:
-        print("⚠️ Erro ao atualizar webhook no banco:", e)
-
-    # Sempre retorna 200 rápido para o Mercado Pago
-    return "", 200
-
-# ========================
-# LISTAR PIX (teste)
-# ========================
-@app.route("/listar_pix", methods=["GET"])
-def listar_pix():
-    try:
-        conn = get_db()
-        cur = conn.cursor()
-        cur.execute("""
-            SELECT payment_id, email, status, amount, created_at, expires_at, webhook_received
-            FROM pix_notifications
-        """)
-        rows = cur.fetchall()
-        cur.close()
-        conn.close()
-
-        result = []
-        for r in rows:
-            result.append({
-                "payment_id": r[0],
-                "email": r[1],
-                "status": r[2],
-                "amount": float(r[3]),
-                "created_at": r[4].isoformat(),
-                "expires_at": r[5].isoformat(),
-                "webhook_received": r[6]
-            })
-        return jsonify(result)
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-# ========================
-# RODAR SERVIDOR
-# ========================
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 8080))  # porta dinâmica Railway
-    app.run(host="0.0.0.0", port=port, debug=True)
+// ------------------ EXECUTAR AO CARREGAR ------------------
+window.addEventListener("load", criarPixContainer);
