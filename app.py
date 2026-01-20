@@ -60,7 +60,7 @@ def gerar_pix():
             {
                 "title": "DED 2.0 - Acesso",
                 "quantity": 1,
-                "unit_price": 5
+                "unit_price": 1
             }
         ],
         "payer": {"email": email},
@@ -181,3 +181,4 @@ def init_db_route():
 @app.route("/")
 def home():
     return "DED 2.0 PIX API ONLINE 🚀"
+
