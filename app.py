@@ -4,6 +4,9 @@ from flask_cors import CORS
 import datetime
 import uuid
 
+# ========================
+# CONFIGURAÇÃO DO FLASK
+# ========================
 app = Flask(__name__)
 CORS(app)
 
@@ -18,7 +21,7 @@ def get_db():
 def init_db():
     conn = get_db()
     cur = conn.cursor()
-    # Cria tabela se não existir
+    # Criar tabela se não existir
     cur.execute("""
         CREATE TABLE IF NOT EXISTS pix_notifications (
             id SERIAL PRIMARY KEY,
@@ -38,24 +41,28 @@ def init_db():
 init_db()
 
 # ========================
-# GERAR PIX (grava email tentando pagar)
+# ENDPOINT PARA GERAR PIX
 # ========================
-@app.route("/gerar_pix", methods=["POST"])
+@app.route("/gerar_pix", methods=["GET", "POST"])
 def gerar_pix():
-    data = request.json
-    email = data.get("email")
+    # Suporta GET ou POST
+    if request.method == "POST":
+        data = request.json
+        email = data.get("email")
+    else:
+        email = request.args.get("email")
 
     if not email:
         return jsonify({"error": "Email obrigatório"}), 400
 
-    # Gerar ID único para pagamento
-    payment_id = str(uuid.uuid4())[:8]  # exemplo de 8 caracteres
-    amount = 5  # valor fixo de 5 reais
-    status = "pending"  # status inicial
+    # Criar ID único para o pagamento
+    payment_id = str(uuid.uuid4())[:8]  # 8 caracteres
+    amount = 5  # valor fixo do PIX
+    status = "pending"  # registra tentativa
     created_at = datetime.datetime.utcnow()
     expires_at = created_at + datetime.timedelta(days=30)
 
-    # Gravar no banco
+    # Inserir no banco de dados
     try:
         conn = get_db()
         cur = conn.cursor()
@@ -70,7 +77,7 @@ def gerar_pix():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-    # Retornar dados para a extensão
+    # Retornar para a extensão
     return jsonify({
         "message": "Tentativa de pagamento registrada",
         "payment_id": payment_id,
@@ -81,5 +88,35 @@ def gerar_pix():
         "expires_at": expires_at.isoformat()
     })
 
+# ========================
+# ENDPOINT PARA LISTAR TODOS OS PAGAMENTOS (teste)
+# ========================
+@app.route("/listar_pix", methods=["GET"])
+def listar_pix():
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute("SELECT payment_id, email, status, amount, created_at, expires_at FROM pix_notifications")
+        rows = cur.fetchall()
+        cur.close()
+        conn.close()
+
+        result = []
+        for r in rows:
+            result.append({
+                "payment_id": r[0],
+                "email": r[1],
+                "status": r[2],
+                "amount": float(r[3]),
+                "created_at": r[4].isoformat(),
+                "expires_at": r[5].isoformat()
+            })
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+# ========================
+# RODAR SERVIDOR
+# ========================
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080, debug=True)
