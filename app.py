@@ -44,7 +44,7 @@ def init_db():
     cur.close()
     conn.close()
 
-init_db()
+#init_db()
 
 # ========================
 # GERAR PIX
@@ -200,3 +200,4 @@ def validar():
 @app.route("/")
 def home():
     return "DED 2.0 PIX API ONLINE 🚀"
+
