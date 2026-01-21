@@ -14,6 +14,7 @@ DATABASE_URL = os.environ.get("DATABASE_URL")
 def get_db():
     return psycopg2.connect(
         DATABASE_URL,
+        sslmode="require",
         connect_timeout=5
     )
 
@@ -67,3 +68,4 @@ def teste_db():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080)
+
