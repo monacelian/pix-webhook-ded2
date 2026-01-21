@@ -1,12 +1,14 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import mercadopago
-
+import os
 app = Flask(__name__)
 CORS(app)  # permite que a extensão faça fetch
 
 # Configure seu Access Token do Mercado Pago
-mp = mercadopago.SDK("SEU_ACCESS_TOKEN_AQUI")
+
+mp = mercadopago.SDK(os.getenv("MP_ACCESS_TOKEN"))
+
 
 @app.route("/gerar_pix")
 def gerar_pix():
@@ -42,3 +44,4 @@ def gerar_pix():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
+
