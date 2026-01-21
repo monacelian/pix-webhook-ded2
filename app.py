@@ -10,6 +10,9 @@ from datetime import datetime
 # ------------------ APP ------------------
 app = Flask(__name__)
 CORS(app)
+@app.route("/")
+def home():
+    return "OK"
 
 # ------------------ ENV ------------------
 DATABASE_URL = os.getenv("DATABASE_URL")
@@ -96,3 +99,4 @@ def gerar_pix():
 # ------------------ START ------------------
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080)
+
