@@ -11,6 +11,7 @@ CORS(app)  # permite que a extensão faça fetch
 # ----------------- CONFIG -----------------
 DATABASE_URL = os.environ.get("DATABASE_URL")
 MP_ACCESS_TOKEN = os.environ.get("MP_ACCESS_TOKEN")
+WEBHOOK_URL = os.environ.get("WEBHOOK_URL")
 
 # ----------------- MERCADO PAGO -----------------
 mp = mercadopago.SDK(MP_ACCESS_TOKEN)
@@ -71,6 +72,48 @@ def gerar_pix():
         "qr_base64": qr_base64,
         "valor": result["transaction_amount"]
     })
+
+# ----------------- WEBHOOK -----------------
+@app.route("/webhook", methods=["POST"])
+def webhook():
+    data = request.json or {}
+    payment_id = None
+
+    # Extrair payment_id
+    if "data" in data and "id" in data["data"]:
+        payment_id = data["data"]["id"]
+    elif request.args.get("id"):
+        payment_id = request.args.get("id")
+
+    if not payment_id:
+        return "OK", 200
+
+    # Consultar pagamento
+    r = mp.payment().get(payment_id)
+    p = r["response"]
+
+    if p["status"] != "approved":
+        return "OK", 200
+
+    # Atualiza pagamento no banco
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute("""
+            UPDATE pagamentos
+            SET status = %s
+            WHERE payment_id = %s
+        """, (
+            "approved",
+            str(payment_id)
+        ))
+        conn.commit()
+        cur.close()
+        conn.close()
+    except:
+        pass  # não interrompe o webhook
+
+    return "OK", 200
 
 # ----------------- START -----------------
 if __name__ == "__main__":
