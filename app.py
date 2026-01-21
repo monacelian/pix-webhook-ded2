@@ -4,6 +4,10 @@ from flask import Flask, request, jsonify
 from datetime import datetime
 import mercadopago
 
+from flask_cors import CORS
+app = Flask(__name__)
+CORS(app)
+
 app = Flask(__name__)
 
 # ========================
@@ -95,3 +99,4 @@ def gerar_pix():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080)
+
