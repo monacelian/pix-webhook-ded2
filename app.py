@@ -9,7 +9,8 @@ import time
 
 # ---------------- CONFIGURAÇÃO ----------------
 dk = mercadopago.SDK(os.getenv("MP_ACCESS_TOKEN"))
-sdk = mercadopago.SDK(ACCESS_TOKEN)
+sdk = mercadopago.SDK("APP_USR-4983735969013417-011912-06b5dab8d512172248682b9398cd847b-32984780")
+
 
 app = Flask(__name__)
 CORS(app)  # permite comunicação com a extensão
@@ -97,4 +98,5 @@ def webhook():
 # ---------------- RUN ----------------
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080)
+
 
