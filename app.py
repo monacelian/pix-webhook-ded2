@@ -1,57 +1,74 @@
+# app.py
 from flask import Flask, request, jsonify
-from flask_cors import CORS
 import mercadopago
+import qrcode
+import io
+import threading
+
+ACCESS_TOKEN = "APP_USR-4983735969013417-011912-06b5dab8d512172248682b9398cd847b-32984780"
+sdk = mercadopago.SDK(ACCESS_TOKEN)
 
 app = Flask(__name__)
-CORS(app)  # permite comunicação com a extensão
 
-# ----------------- CONFIGURAÇÃO -----------------
-# Substitua pelo seu Access Token de PRODUÇÃO
-mp = mercadopago.SDK("APP_USR-4983735969013417-011912-06b5dab8d512172248682b9398cd847b-32984780")
+# Pagamentos pendentes
+pagamentos_pendentes = {}
 
-# ----------------- GERAR PIX -----------------
+def criar_pix(titulo, valor, email_cliente):
+    preference_data = {
+        "items": [{"title": titulo, "quantity": 1, "unit_price": valor}],
+        "payer": {"email": email_cliente},
+        "payment_methods": {"excluded_payment_types": [{"id": "ticket"}, {"id": "atm"}, {"id": "credit_card"}]},
+        "back_urls": {"success": "https://www.google.com/", "failure": "https://www.google.com/", "pending": "https://www.google.com/"},
+        "auto_return": "approved"
+    }
+
+    pref = sdk.preference().create(preference_data)
+    link = pref["response"].get("init_point")
+    pix_id = pref["response"]["id"]
+
+    # Gerar QR Code
+    qr = qrcode.QRCode()
+    qr.add_data(link)
+    qr.make(fit=True)
+    img = qr.make_image(fill_color="black", back_color="white")
+    buf = io.BytesIO()
+    img.save(buf)
+    buf.seek(0)
+
+    # Guardar pagamento pendente
+    pagamentos_pendentes[pix_id] = {"status": "pending", "link": link, "valor": valor, "email": email_cliente}
+
+    return pix_id, link
+
 @app.route("/gerar_pix")
-def gerar_pix():
+def gerar_pix_route():
     email = request.args.get("email")
     if not email:
         return jsonify({"error": "Email não fornecido"}), 400
 
-    payment_data = {
-        "transaction_amount": 1.0,  # valor em reais
-        "description": "Pagamento via DedMais Pix",
-        "payment_method_id": "pix",
-        "payer": {"email": email},
-    }
+    pix_id, link = criar_pix("Pagamento via DedMais Pix", 1.0, email)
+    return jsonify({"pix_id": pix_id, "link_pix": link})
 
-    try:
-        payment_response = mp.payment().create(payment_data)
-        payment = payment_response["response"]
-
-        # Pega o link do QR Code do Pix
-        qr_link_url = payment.get("point_of_interaction", {}).get("transaction_data", {}).get("qr_code")
-
-        if not qr_link_url:
-            return jsonify({"error": "Não foi possível gerar Pix"}), 500
-
-        return jsonify({
-            "link_pix": qr_link_url,
-            "valor": payment.get("transaction_amount", 1.0)
-        })
-    except Exception as e:
-        print("Erro ao gerar Pix:", e)
-        return jsonify({"error": "Não foi possível gerar Pix"}), 500
-
-# ----------------- WEBHOOK -----------------
 @app.route("/webhook", methods=["POST"])
 def webhook():
     data = request.json
-    print("Recebi webhook:", data)
+    print("=== Notificação recebida do Mercado Pago ===")
+    print(data)
 
-    # Aqui você pode adicionar lógica para marcar pagamento como concluído
-    # ou enviar mensagem para extensão via websocket / polling
+    payment_id = None
+    if "data" in data and "id" in data["data"]:
+        payment_id = data["data"]["id"]
+    elif "resource" in data:
+        payment_id = data["resource"].split("/")[-1]
 
+    if payment_id:
+        try:
+            resp = sdk.payment().get(payment_id)
+            payment = resp["response"]
+            print(f"Pagamento ID: {payment.get('id')} Status: {payment.get('status')}")
+        except Exception as e:
+            print("Erro ao consultar API:", e)
     return "OK", 200
 
-# ----------------- RUN -----------------
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8080)
+    app.run(host="0.0.0.0", port=5000)
