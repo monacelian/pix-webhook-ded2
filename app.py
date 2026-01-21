@@ -1,91 +1,57 @@
-console.log("📘 Extensão DedMais Pix ativa");
+from flask import Flask, request, jsonify
+from flask_cors import CORS
+import mercadopago
 
-function criarPixContainer() {
-  if (document.getElementById("pix-container")) return;
+app = Flask(__name__)
+CORS(app)  # permite comunicação com a extensão
 
-  const container = document.createElement("div");
-  container.id = "pix-container";
-  container.style.cssText = `
-    position: fixed;
-    top: 10px;
-    right: 10px;
-    background: #f5f5f5;
-    padding: 10px 14px;
-    border: 1px solid #ccc;
-    border-radius: 6px;
-    z-index: 9999;
-    box-shadow: 0 2px 6px rgba(0,0,0,0.2);
-    font-family: sans-serif;
-  `;
+# ----------------- CONFIGURAÇÃO -----------------
+# Substitua pelo seu Access Token de PRODUÇÃO
+mp = mercadopago.SDK("APP_USR-4983735969013417-011912-06b5dab8d512172248682b9398cd847b-32984780")
 
-  const input = document.createElement("input");
-  input.id = "input-email-pix";
-  input.placeholder = "Digite seu email";
-  input.style.cssText = `
-    padding: 4px 8px;
-    border-radius: 4px;
-    border: 1px solid #ccc;
-    width: 180px;
-  `;
+# ----------------- GERAR PIX -----------------
+@app.route("/gerar_pix")
+def gerar_pix():
+    email = request.args.get("email")
+    if not email:
+        return jsonify({"error": "Email não fornecido"}), 400
 
-  const btn = document.createElement("button");
-  btn.id = "btn-validar-pix";
-  btn.textContent = "Gerar Pix 1 real";
-  btn.style.cssText = `
-    margin-left: 6px;
-    padding: 4px 10px;
-    border-radius: 4px;
-    background: #1976d2;
-    color: white;
-    font-weight: bold;
-    cursor: pointer;
-    border: none;
-  `;
-
-  container.appendChild(input);
-  container.appendChild(btn);
-  document.body.appendChild(container);
-
-  btn.onclick = async () => {
-    const email = input.value.trim();
-    if (!email) {
-      alert("Digite um email!");
-      return;
+    payment_data = {
+        "transaction_amount": 1.0,  # valor em reais
+        "description": "Pagamento via DedMais Pix",
+        "payment_method_id": "pix",
+        "payer": {"email": email},
     }
 
-    btn.disabled = true;
-    btn.textContent = "Gerando...";
+    try:
+        payment_response = mp.payment().create(payment_data)
+        payment = payment_response["response"]
 
-    try {
-      const resp = await fetch(`https://web-production-dc4e3.up.railway.app/gerar_pix?email=${encodeURIComponent(email)}`);
-      const json = await resp.json();
+        # Pega o link do QR Code do Pix
+        qr_link_url = payment.get("point_of_interaction", {}).get("transaction_data", {}).get("qr_code")
 
-      if (json.link_pix) {
-        // Remove QR antigo se existir
-        const oldQr = document.getElementById("qr-pix");
-        if (oldQr) oldQr.remove();
+        if not qr_link_url:
+            return jsonify({"error": "Não foi possível gerar Pix"}), 500
 
-        // Cria QR Code
-        const qrImg = document.createElement("img");
-        qrImg.src = `https://api.qrserver.com/v1/create-qr-code/?data=${encodeURIComponent(json.link_pix)}&size=150x150`;
-        qrImg.style.marginTop = "8px";
-        qrImg.id = "qr-pix";
-        container.appendChild(qrImg);
+        return jsonify({
+            "link_pix": qr_link_url,
+            "valor": payment.get("transaction_amount", 1.0)
+        })
+    except Exception as e:
+        print("Erro ao gerar Pix:", e)
+        return jsonify({"error": "Não foi possível gerar Pix"}), 500
 
-        btn.textContent = "Pago? ⏳"; // opcional, muda após o pagamento
-        alert(`✅ Pix gerado: R$${json.valor}`);
-      } else {
-        alert("❌ Não foi possível gerar Pix");
-      }
-    } catch (e) {
-      console.error(e);
-      alert("Erro na comunicação com o servidor");
-    } finally {
-      btn.disabled = false;
-      btn.textContent = "Gerar Pix 1 real";
-    }
-  };
-}
+# ----------------- WEBHOOK -----------------
+@app.route("/webhook", methods=["POST"])
+def webhook():
+    data = request.json
+    print("Recebi webhook:", data)
 
-// Executa ao carregar a página
-window.addEventListener("load", criarPixContainer);
+    # Aqui você pode adicionar lógica para marcar pagamento como concluído
+    # ou enviar mensagem para extensão via websocket / polling
+
+    return "OK", 200
+
+# ----------------- RUN -----------------
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=8080)
