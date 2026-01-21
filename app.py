@@ -19,7 +19,14 @@ MP_ACCESS_TOKEN = os.getenv("MP_ACCESS_TOKEN")
 mp = mercadopago.SDK(MP_ACCESS_TOKEN)
 
 # ------------------ DATABASE ------------------
-engine = create_engine(DATABASE_URL)
+engine = create_engine(
+    DATABASE_URL,
+    pool_pre_ping=True,
+    connect_args={
+        "sslmode": "require"
+    }
+)
+
 SessionLocal = sessionmaker(bind=engine)
 Base = declarative_base()
 
@@ -33,7 +40,7 @@ class Pagamento(Base):
     valor = Column(Float, nullable=False)
     data_pagamento = Column(DateTime, default=datetime.utcnow)
 
-# ❗ NÃO criar tabela, ela JÁ existe
+# ❌ NÃO criar tabela
 # Base.metadata.create_all(engine)
 
 # ------------------ ROTA PIX ------------------
