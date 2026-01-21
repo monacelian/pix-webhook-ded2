@@ -27,26 +27,38 @@ def gerar_pix():
     if not email or not uuid:
         return jsonify({"error": "Email ou UUID não fornecido"}), 400
 
-    # Cria pagamento no Mercado Pago
+    # Cria pagamento no Mercado Pago com validade mínima 30 minutos
+    expiration_time = datetime.utcnow() + timedelta(minutes=30)
     payment_data = {
         "transaction_amount": 1.0,
         "description": "Pagamento Pix DedMais",
         "payment_method_id": "pix",
         "payer": {"email": email},
+        # Adiciona expiration_date no formato ISO 8601 (UTC)
+        "date_of_expiration": expiration_time.isoformat() + "Z"
     }
 
-    payment = mp.payment().create(payment_data)
+    try:
+        payment = mp.payment().create(payment_data)
+    except Exception as e:
+        return jsonify({"error": f"Erro ao criar pagamento no MP: {str(e)}"}), 500
+
     if payment["status"] != 201:
         return jsonify({"error": "Erro ao criar pagamento"}), 500
 
     result = payment["response"]
+
+    # ------------------ PRINT PARA LOG ------------------
+    print("📌 Pix gerado:", result)
+
+    # Extrai QR code
     pix_payload = result.get("point_of_interaction", {}).get("transaction_data", {}).get("qr_code")
     qr_base64 = result.get("point_of_interaction", {}).get("transaction_data", {}).get("qr_code_base64")
 
     if not pix_payload or not qr_base64:
         return jsonify({"error": "Não foi possível gerar Pix"}), 500
 
-    # Salvar no banco
+    # -------- SALVAR NO BANCO --------
     try:
         conn = get_db()
         cur = conn.cursor()
@@ -59,7 +71,7 @@ def gerar_pix():
             uuid,
             result["transaction_amount"],
             "pending",
-            None,
+            expiration_time,
             datetime.utcnow()
         ))
         conn.commit()
@@ -72,7 +84,8 @@ def gerar_pix():
         "payment_id": result["id"],
         "pix_payload": pix_payload,
         "qr_base64": qr_base64,
-        "valor": result["transaction_amount"]
+        "valor": result["transaction_amount"],
+        "valid_until": expiration_time.isoformat()
     })
 
 # ----------------- WEBHOOK -----------------
@@ -95,7 +108,7 @@ def webhook():
     if p["status"] != "approved":
         return "OK", 200
 
-    # Atualiza pagamento e define validade 30 dias
+    # Atualiza pagamento e define validade 30 dias (assinatura mensal)
     try:
         conn = get_db()
         cur = conn.cursor()
@@ -111,7 +124,8 @@ def webhook():
         conn.commit()
         cur.close()
         conn.close()
-    except:
+    except Exception as e:
+        print("❌ Erro ao atualizar pagamento no webhook:", e)
         pass
 
     return "OK", 200
