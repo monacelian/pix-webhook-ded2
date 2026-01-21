@@ -5,36 +5,17 @@ from datetime import datetime
 
 app = Flask(__name__)
 
-# ========================
-# CONFIG
-# ========================
-
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
 # ========================
-# BANCO DE DADOS
+# BANCO
 # ========================
 
 def get_db():
-    return psycopg2.connect(DATABASE_URL)
-
-def init_db():
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS pagamentos (
-            id SERIAL PRIMARY KEY,
-            email TEXT,
-            valor NUMERIC,
-            status TEXT,
-            data_pagamento TIMESTAMP
-        )
-    """)
-    conn.commit()
-    cur.close()
-    conn.close()
-
-init_db()
+    return psycopg2.connect(
+        DATABASE_URL,
+        connect_timeout=5
+    )
 
 # ========================
 # ROTAS
@@ -42,13 +23,24 @@ init_db()
 
 @app.route("/")
 def home():
-    return "Servidor ONLINE - Teste Banco"
+    return "Servidor ONLINE - Teste Banco 🚀"
 
 @app.route("/teste_db")
 def teste_db():
     try:
         conn = get_db()
         cur = conn.cursor()
+
+        # cria tabela SOMENTE quando chamar a rota
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS pagamentos (
+                id SERIAL PRIMARY KEY,
+                email TEXT,
+                valor NUMERIC,
+                status TEXT,
+                data_pagamento TIMESTAMP
+            )
+        """)
 
         cur.execute("""
             INSERT INTO pagamentos (email, valor, status, data_pagamento)
