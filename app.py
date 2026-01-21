@@ -3,17 +3,16 @@ from flask_cors import CORS
 import mercadopago
 import os
 import psycopg2
-from datetime import datetime
+from datetime import datetime, timedelta
 
 app = Flask(__name__)
-CORS(app)  # permite que a extensão faça fetch
+CORS(app)
 
 # ----------------- CONFIG -----------------
 DATABASE_URL = os.environ.get("DATABASE_URL")
 MP_ACCESS_TOKEN = os.environ.get("MP_ACCESS_TOKEN")
 WEBHOOK_URL = os.environ.get("WEBHOOK_URL")
 
-# ----------------- MERCADO PAGO -----------------
 mp = mercadopago.SDK(MP_ACCESS_TOKEN)
 
 # ----------------- BANCO DE DADOS -----------------
@@ -24,8 +23,9 @@ def get_db():
 @app.route("/gerar_pix")
 def gerar_pix():
     email = request.args.get("email")
-    if not email:
-        return jsonify({"error": "Email não fornecido"}), 400
+    uuid = request.args.get("uuid")
+    if not email or not uuid:
+        return jsonify({"error": "Email ou UUID não fornecido"}), 400
 
     # Cria pagamento no Mercado Pago
     payment_data = {
@@ -46,18 +46,20 @@ def gerar_pix():
     if not pix_payload or not qr_base64:
         return jsonify({"error": "Não foi possível gerar Pix"}), 500
 
-    # -------- SALVAR NO BANCO --------
+    # Salvar no banco
     try:
         conn = get_db()
         cur = conn.cursor()
         cur.execute("""
-            INSERT INTO pagamentos (payment_id, email, valor, status, data_pagamento)
-            VALUES (%s, %s, %s, %s, %s)
+            INSERT INTO pagamentos (payment_id, email, uuid, valor, status, valid_until, data_pagamento)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
         """, (
             str(result["id"]),
             email,
+            uuid,
             result["transaction_amount"],
             "pending",
+            None,
             datetime.utcnow()
         ))
         conn.commit()
@@ -79,7 +81,6 @@ def webhook():
     data = request.json or {}
     payment_id = None
 
-    # Extrair payment_id
     if "data" in data and "id" in data["data"]:
         payment_id = data["data"]["id"]
     elif request.args.get("id"):
@@ -88,32 +89,64 @@ def webhook():
     if not payment_id:
         return "OK", 200
 
-    # Consultar pagamento
     r = mp.payment().get(payment_id)
     p = r["response"]
 
     if p["status"] != "approved":
         return "OK", 200
 
-    # Atualiza pagamento no banco
+    # Atualiza pagamento e define validade 30 dias
     try:
         conn = get_db()
         cur = conn.cursor()
         cur.execute("""
             UPDATE pagamentos
-            SET status = %s
+            SET status = %s, valid_until = %s
             WHERE payment_id = %s
         """, (
             "approved",
+            datetime.utcnow() + timedelta(days=30),
             str(payment_id)
         ))
         conn.commit()
         cur.close()
         conn.close()
     except:
-        pass  # não interrompe o webhook
+        pass
 
     return "OK", 200
+
+# ----------------- CHECAR STATUS -----------------
+@app.route("/checar_pagamento")
+def checar_pagamento():
+    uuid = request.args.get("uuid")
+    if not uuid:
+        return jsonify({"error": "UUID não fornecido"}), 400
+
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT status, valid_until
+            FROM pagamentos
+            WHERE uuid = %s
+            ORDER BY data_pagamento DESC
+            LIMIT 1
+        """, (uuid,))
+        row = cur.fetchone()
+        cur.close()
+        conn.close()
+
+        if not row:
+            return jsonify({"status": "none"})  # Nenhum pagamento encontrado
+
+        status, valid_until = row
+        if status != "approved" or valid_until < datetime.utcnow():
+            return jsonify({"status": "expired"})
+
+        return jsonify({"status": "active", "valid_until": valid_until.isoformat()})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 # ----------------- START -----------------
 if __name__ == "__main__":
