@@ -1,51 +1,40 @@
-# app.py
-from flask import Flask, request, jsonify
-from flask_cors import CORS
-import mercadopago
+btn.onclick = async () => {
+  const email = input.value.trim();
+  if (!email) {
+    status.textContent = "❌ Digite um email!";
+    return;
+  }
 
-app = Flask(__name__)
-CORS(app)
+  btn.disabled = true;
+  btn.textContent = "Gerando...";
+  status.textContent = "";
 
-ACCESS_TOKEN = "APP_USR-4983735969013417-011912-06b5dab8d512172248682b9398cd847b-32984780"
-sdk = mercadopago.SDK(ACCESS_TOKEN)
+  try {
+    const resp = await fetch(`https://web-production-dc4e3.up.railway.app/gerar_pix?email=${encodeURIComponent(email)}`);
+    const json = await resp.json();
 
-@app.route("/gerar_pix")
-def gerar_pix():
-    email = request.args.get("email")
-    if not email:
-        return jsonify({"error": "Email não fornecido"}), 400
+    if (json.qr_base64) {
+      // Remove QR antigo
+      const oldQr = document.getElementById("qr-pix");
+      if (oldQr) oldQr.remove();
 
-    try:
-        payment_data = {
-            "transaction_amount": 1.0,
-            "description": "Pagamento via DedMais Pix",
-            "payment_method_id": "pix",
-            "payer": {"email": email},
-        }
+      const qrImg = document.createElement("img");
+      qrImg.id = "qr-pix";
+      qrImg.src = `data:image/png;base64,${json.qr_base64}`;
+      qrImg.style.marginTop = "8px";
+      qrImg.style.display = "block";
 
-        payment_response = sdk.payment().create(payment_data)
-        payment = payment_response["response"]
-
-        # Pega o QR Code do Pix
-        qr_code = payment.get("point_of_interaction", {}).get("transaction_data", {}).get("qr_code")
-
-        if not qr_code:
-            return jsonify({"error": "Não foi possível gerar Pix"}), 500
-
-        return jsonify({
-            "link_pix": qr_code,
-            "valor": payment.get("transaction_amount", 1.0)
-        })
-
-    except Exception as e:
-        print("Erro ao gerar Pix:", e)
-        return jsonify({"error": "Não foi possível gerar Pix"}), 500
-
-@app.route("/webhook", methods=["POST"])
-def webhook():
-    data = request.json
-    print("Recebi webhook:", data)
-    return "OK", 200
-
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8080)
+      container.appendChild(qrImg);
+      status.textContent = `✅ Pix gerado: R$${json.valor}`;
+      btn.textContent = "Pago? ⏳";
+    } else {
+      status.textContent = "❌ Não foi possível gerar Pix";
+    }
+  } catch (e) {
+    console.error(e);
+    status.textContent = "⚠️ Erro na comunicação com o servidor";
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Gerar Pix 1 real";
+  }
+};
