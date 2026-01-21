@@ -8,7 +8,7 @@ import threading
 import time
 
 # ---------------- CONFIGURAÇÃO ----------------
-ACCESS_TOKEN = "APP_USR-4983735969013417-011912-06b5dab8d512172248682b9398cd847b-32984780"
+dk = mercadopago.SDK(os.getenv("MP_ACCESS_TOKEN"))
 sdk = mercadopago.SDK(ACCESS_TOKEN)
 
 app = Flask(__name__)
@@ -97,3 +97,4 @@ def webhook():
 # ---------------- RUN ----------------
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080)
+
