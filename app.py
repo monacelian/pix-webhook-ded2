@@ -13,28 +13,27 @@ def home():
 @app.route("/teste_db")
 def teste_db():
     try:
-        conn = psycopg2.connect(DATABASE_URL, sslmode="require")
+        conn = psycopg2.connect(
+            DATABASE_URL,
+            sslmode="require"
+        )
         cur = conn.cursor()
 
-        # cria tabela se não existir
         cur.execute("""
-            CREATE TABLE IF NOT EXISTS testes (
-                id SERIAL PRIMARY KEY,
-                mensagem TEXT
-            )
-        """)
-
-        # insere dado
-        cur.execute(
-            "INSERT INTO testes (mensagem) VALUES (%s)",
-            ("Funcionou!",)
-        )
+            INSERT INTO pagamentos (payment_id, email, status, valor)
+            VALUES (%s, %s, %s, %s)
+        """, (
+            "TESTE123",
+            "teste@exemplo.com",
+            "pending",
+            1.00
+        ))
 
         conn.commit()
         cur.close()
         conn.close()
 
-        return jsonify({"status": "ok", "msg": "Gravou no banco"})
+        return jsonify({"status": "ok", "msg": "Registro inserido"})
 
     except Exception as e:
         return jsonify({"erro": str(e)}), 500
