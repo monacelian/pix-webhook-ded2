@@ -6,10 +6,10 @@ flask-cors
 qrcode[pil]
 requests
 python-dotenv
-
 sqlalchemy
-psycopg2-binary
 python-dotenv
+ 
+
 
 
 
