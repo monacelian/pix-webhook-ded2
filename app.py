@@ -14,11 +14,17 @@ CORS(app)
 DATABASE_URL = os.getenv("DATABASE_URL")
 MP_ACCESS_TOKEN = os.getenv("MP_ACCESS_TOKEN")
 
+if not DATABASE_URL or not MP_ACCESS_TOKEN:
+    raise Exception("Variáveis de ambiente não configuradas")
+
 # ------------------ MERCADO PAGO ------------------
 mp = mercadopago.SDK(MP_ACCESS_TOKEN)
 
-# ------------------ DATABASE ------------------
-engine = create_engine(DATABASE_URL)
+# ------------------ DATABASE (Railway SSL) ------------------
+engine = create_engine(
+    DATABASE_URL,
+    connect_args={"sslmode": "require"}
+)
 SessionLocal = sessionmaker(bind=engine)
 Base = declarative_base()
 
@@ -53,21 +59,24 @@ def gerar_pix():
 
     payment = mp.payment().create(payment_data)
 
+    # 🔍 DEBUG REAL DO MERCADO PAGO
     if payment["status"] != 201:
-        return jsonify({"error": "Erro ao criar pagamento"}), 500
+        return jsonify({
+            "error": "Erro ao criar pagamento",
+            "detalhes": payment
+        }), 500
 
     result = payment["response"]
 
-    pix_payload = result.get("point_of_interaction", {}) \
-                        .get("transaction_data", {}) \
-                        .get("qr_code")
-
-    qr_base64 = result.get("point_of_interaction", {}) \
-                      .get("transaction_data", {}) \
-                      .get("qr_code_base64")
+    tx = result.get("point_of_interaction", {}).get("transaction_data", {})
+    pix_payload = tx.get("qr_code")
+    qr_base64 = tx.get("qr_code_base64")
 
     if not pix_payload or not qr_base64:
-        return jsonify({"error": "Não foi possível gerar Pix"}), 500
+        return jsonify({
+            "error": "Pix não retornou dados",
+            "detalhes": result
+        }), 500
 
     # -------- SALVAR NO BANCO --------
     db = SessionLocal()
