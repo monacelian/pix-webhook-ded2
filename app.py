@@ -65,7 +65,7 @@ def gerar_pix():
             uuid,
             result["transaction_amount"],
             "pending",
-            datetime.utcnow() + timedelta(minutes=30),  # validade do Pix
+            datetime.utcnow() + timedelta(minutes=30),  # validade interna para polling
             datetime.utcnow()
         ))
         conn.commit()
@@ -134,7 +134,7 @@ def checar_pagamento():
         conn = get_db()
         cur = conn.cursor()
         cur.execute("""
-            SELECT status, valid_until
+            SELECT payment_id
             FROM pagamentos
             WHERE uuid = %s
             ORDER BY data_pagamento DESC
@@ -145,13 +145,20 @@ def checar_pagamento():
         conn.close()
 
         if not row:
-            return jsonify({"status": "none"})  # Nenhum pagamento encontrado
+            return jsonify({"status": "none"})
 
-        status, valid_until = row
-        if status != "approved" or valid_until < datetime.utcnow():
+        payment_id = row[0]
+
+        # Consulta o Mercado Pago para status real
+        mp_status = mp.payment().get(payment_id)["response"]["status"]
+
+        if mp_status == "approved":
+            return jsonify({"status": "active"})
+        elif mp_status == "pending":
+            return jsonify({"status": "pending"})
+        else:
             return jsonify({"status": "expired"})
 
-        return jsonify({"status": "active", "valid_until": valid_until.isoformat()})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
