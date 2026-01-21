@@ -1,90 +1,100 @@
-console.log("📘 Extensão DedMais Pix ativa");
+# servidor_pix_railway.py
+from flask import Flask, request, jsonify
+from flask_cors import CORS
+import mercadopago
+import qrcode
+import io
 
-function criarPixContainer() {
-  if (document.getElementById("pix-container")) return;
+# ----------------- CONFIGURAÇÃO -----------------
+ACCESS_TOKEN = "APP_USR-4983735969013417-011912-06b5dab8d512172248682b9398cd847b-32984780"
+sdk = mercadopago.SDK(ACCESS_TOKEN)
 
-  const container = document.createElement("div");
-  container.id = "pix-container";
-  container.style.cssText = `
-    position: fixed;
-    top: 10px;
-    right: 10px;
-    background: #f5f5f5;
-    padding: 10px 14px;
-    border: 1px solid #ccc;
-    border-radius: 6px;
-    z-index: 9999;
-    box-shadow: 0 2px 6px rgba(0,0,0,0.2);
-    font-family: sans-serif;
-  `;
+app = Flask(__name__)
+CORS(app)
 
-  const input = document.createElement("input");
-  input.id = "input-email-pix";
-  input.placeholder = "Digite seu email";
-  input.style.cssText = `
-    padding: 4px 8px;
-    border-radius: 4px;
-    border: 1px solid #ccc;
-    width: 180px;
-  `;
+# ----------------- PAGAMENTOS PENDENTES -----------------
+pagamentos_pendentes = {}
 
-  const btn = document.createElement("button");
-  btn.id = "btn-validar-pix";
-  btn.textContent = "Gerar Pix 1 real";
-  btn.style.cssText = `
-    margin-left: 6px;
-    padding: 4px 10px;
-    border-radius: 4px;
-    background: #1976d2;
-    color: white;
-    font-weight: bold;
-    cursor: pointer;
-    border: none;
-  `;
+# ----------------- GERAR PIX -----------------
+@app.route("/gerar_pix")
+def gerar_pix():
+    email = request.args.get("email")
+    if not email:
+        return jsonify({"error": "Email não fornecido"}), 400
 
-  container.appendChild(input);
-  container.appendChild(btn);
-  document.body.appendChild(container);
+    try:
+        preference_data = {
+            "items": [{"title": "Pagamento via DedMais Pix", "quantity": 1, "unit_price": 1.0}],
+            "payer": {"email": email},
+            "payment_methods": {"excluded_payment_types": [{"id": "ticket"}, {"id": "atm"}, {"id": "credit_card"}]},
+            "back_urls": {
+                "success": "https://www.google.com/",
+                "failure": "https://www.google.com/",
+                "pending": "https://www.google.com/"
+            },
+            "auto_return": "approved"
+        }
 
-  btn.onclick = async () => {
-    const email = input.value.trim();
-    if (!email) {
-      alert("Digite um email!");
-      return;
-    }
+        pref = sdk.preference().create(preference_data)
+        pref_resp = pref["response"]
 
-    btn.disabled = true;
-    btn.textContent = "Gerando...";
+        pix_payload = pref_resp.get("sandbox_init_point") or pref_resp.get("init_point")
+        if not pix_payload:
+            return jsonify({"error": "Não foi possível gerar Pix"}), 500
 
-    try {
-      const resp = await fetch(`https://web-production-dc4e3.up.railway.app/gerar_pix?email=${encodeURIComponent(email)}`);
-      const json = await resp.json();
+        # Gerar QR Code em Base64
+        qr = qrcode.QRCode(error_correction=qrcode.constants.ERROR_CORRECT_H)
+        qr.add_data(pix_payload)
+        qr.make(fit=True)
+        img = qr.make_image(fill_color="black", back_color="white")
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        buf.seek(0)
+        qr_base64 = buf.getvalue().encode("base64").decode() if hasattr(buf.getvalue(), 'encode') else io.BytesIO(buf.getvalue()).getvalue().hex()
 
-      if (json.qr_base64) {
-        // Remove QR antigo se existir
-        const oldQr = document.getElementById("qr-pix");
-        if (oldQr) oldQr.remove();
+        # Guardar pagamento pendente
+        pagamentos_pendentes[pref_resp["id"]] = {"status": "pending", "valor": 1.0, "email": email}
 
-        // Cria QR Code usando Base64
-        const qrImg = document.createElement("img");
-        qrImg.src = `data:image/png;base64,${json.qr_base64}`;
-        qrImg.style.marginTop = "8px";
-        qrImg.id = "qr-pix";
-        container.appendChild(qrImg);
+        return jsonify({
+            "pix_payload": pix_payload,
+            "qr_base64": qr_base64,
+            "valor": 1.0
+        })
 
-        btn.textContent = "Pago? ⏳"; // opcional, muda após o pagamento
-        alert(`✅ Pix gerado: R$${json.valor}`);
-      } else {
-        alert("❌ Não foi possível gerar Pix");
-      }
-    } catch (e) {
-      console.error(e);
-      alert("Erro na comunicação com o servidor");
-    } finally {
-      btn.disabled = false;
-      btn.textContent = "Gerar Pix 1 real";
-    }
-  };
-}
+    except Exception as e:
+        print("Erro ao gerar Pix:", e)
+        return jsonify({"error": "Não foi possível gerar Pix"}), 500
 
-window.addEventListener("load", criarPixContainer);
+# ----------------- WEBHOOK -----------------
+@app.route("/webhook", methods=["POST"])
+def webhook():
+    data = request.json
+    print("Recebi webhook:", data)
+
+    payment_id = None
+    if "data" in data and "id" in data["data"]:
+        payment_id = data["data"]["id"]
+    elif "resource" in data:
+        payment_id = data["resource"].split("/")[-1]
+
+    if payment_id:
+        try:
+            resp = sdk.payment().get(payment_id)
+            payment = resp["response"]
+            print(f"Pagamento ID: {payment.get('id')}")
+            print(f"Status: {payment.get('status')}")
+            print(f"Método: {payment.get('payment_type_id')}")
+            print(f"Valor: {payment.get('transaction_amount')}")
+            # Atualizar status do pagamento
+            if payment.get("status") == "approved":
+                for key, p in pagamentos_pendentes.items():
+                    if p["email"] == payment.get("payer", {}).get("email"):
+                        pagamentos_pendentes[key]["status"] = "paid"
+        except Exception as e:
+            print("Erro ao consultar API:", e)
+
+    return "OK", 200
+
+# ----------------- RUN -----------------
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=8080)
