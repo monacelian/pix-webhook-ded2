@@ -18,6 +18,31 @@ mp = mercadopago.SDK(MP_ACCESS_TOKEN)
 def get_db():
     return psycopg2.connect(DATABASE_URL)
 
+# ----------------- NOVA FUNÇÃO PARA PEGAR ÚLTIMO PAGAMENTO -----------------
+def get_ultimo_pagamento_valido(uuid):
+    """
+    Retorna o último pagamento válido para o UUID, priorizando approved.
+    """
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT payment_id, status, valid_until
+            FROM pagamentos
+            WHERE uuid = %s
+            ORDER BY
+                CASE WHEN status = 'approved' THEN 1 ELSE 2 END,
+                data_pagamento DESC
+            LIMIT 1
+        """, (uuid,))
+        row = cur.fetchone()
+        cur.close()
+        conn.close()
+        return row  # (payment_id, status, valid_until) ou None
+    except Exception as e:
+        print("Erro ao consultar pagamento:", e)
+        return None
+
 # ----------------- GERAR PIX -----------------
 @app.route("/gerar_pix")
 def gerar_pix():
@@ -43,7 +68,6 @@ def gerar_pix():
 
     result = payment["response"]
 
-    # ------------------ PRINT PARA LOG ------------------
     print("📌 Pix gerado:", result)
 
     pix_payload = result.get("point_of_interaction", {}).get("transaction_data", {}).get("qr_code")
@@ -52,7 +76,6 @@ def gerar_pix():
     if not pix_payload or not qr_base64:
         return jsonify({"error": "Não foi possível gerar Pix"}), 500
 
-    # -------- SALVAR NO BANCO --------
     try:
         conn = get_db()
         cur = conn.cursor()
@@ -65,7 +88,7 @@ def gerar_pix():
             uuid,
             result["transaction_amount"],
             "pending",
-            datetime.utcnow() + timedelta(minutes=30),  # validade interna para polling
+            datetime.utcnow() + timedelta(minutes=30),
             datetime.utcnow()
         ))
         conn.commit()
@@ -101,7 +124,6 @@ def webhook():
     if p["status"] != "approved":
         return "OK", 200
 
-    # Atualiza pagamento e define validade 30 dias (assinatura mensal)
     try:
         conn = get_db()
         cur = conn.cursor()
@@ -131,33 +153,25 @@ def checar_pagamento():
         return jsonify({"error": "UUID não fornecido"}), 400
 
     try:
-        conn = get_db()
-        cur = conn.cursor()
-        cur.execute("""
-            SELECT payment_id
-            FROM pagamentos
-            WHERE uuid = %s
-            ORDER BY data_pagamento DESC
-            LIMIT 1
-        """, (uuid,))
-        row = cur.fetchone()
-        cur.close()
-        conn.close()
+        pagamento = get_ultimo_pagamento_valido(uuid)
 
-        if not row:
+        if not pagamento:
             return jsonify({"status": "none"})
 
-        payment_id = row[0]
+        payment_id, status, valid_until = pagamento
 
-        # Consulta o Mercado Pago para status real
-        mp_status = mp.payment().get(payment_id)["response"]["status"]
-
-        if mp_status == "approved":
+        # Consulta o Mercado Pago apenas se status não for approved ou expirado
+        if status == "approved" and valid_until > datetime.utcnow():
             return jsonify({"status": "active"})
-        elif mp_status == "pending":
-            return jsonify({"status": "pending"})
         else:
-            return jsonify({"status": "expired"})
+            # Verifica status real no Mercado Pago
+            mp_status = mp.payment().get(payment_id)["response"]["status"]
+            if mp_status == "approved":
+                return jsonify({"status": "active"})
+            elif mp_status == "pending":
+                return jsonify({"status": "pending"})
+            else:
+                return jsonify({"status": "expired"})
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
