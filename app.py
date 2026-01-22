@@ -18,7 +18,7 @@ mp = mercadopago.SDK(MP_ACCESS_TOKEN)
 def get_db():
     return psycopg2.connect(DATABASE_URL)
 
-# ----------------- NOVA FUNÇÃO PARA PEGAR ÚLTIMO PAGAMENTO -----------------
+# ----------------- FUNÇÃO PARA PEGAR ÚLTIMO PAGAMENTO -----------------
 def get_ultimo_pagamento_valido(uuid):
     """
     Retorna o último pagamento válido para o UUID, priorizando approved.
@@ -124,9 +124,12 @@ def webhook():
     if p["status"] != "approved":
         return "OK", 200
 
+    # Atualiza pagamento aprovado e remove pendentes
     try:
         conn = get_db()
         cur = conn.cursor()
+
+        # 1️⃣ Atualiza status do pagamento aprovado
         cur.execute("""
             UPDATE pagamentos
             SET status = %s, valid_until = %s
@@ -136,11 +139,25 @@ def webhook():
             datetime.utcnow() + timedelta(days=30),
             str(payment_id)
         ))
+
+        # 2️⃣ Apaga todos os pagamentos pendentes do mesmo UUID
+        # Primeiro precisamos buscar o UUID do pagamento aprovado
+        cur.execute("""
+            SELECT uuid FROM pagamentos WHERE payment_id = %s
+        """, (payment_id,))
+        row = cur.fetchone()
+        if row:
+            uuid = row[0]
+            cur.execute("""
+                DELETE FROM pagamentos
+                WHERE uuid = %s AND status = 'pending'
+            """, (uuid,))
+
         conn.commit()
         cur.close()
         conn.close()
     except Exception as e:
-        print("❌ Erro ao atualizar pagamento no webhook:", e)
+        print("❌ Erro ao atualizar/apagar pagamentos no webhook:", e)
         pass
 
     return "OK", 200
@@ -164,7 +181,6 @@ def checar_pagamento():
         if status == "approved" and valid_until > datetime.utcnow():
             return jsonify({"status": "active"})
         else:
-            # Verifica status real no Mercado Pago
             mp_status = mp.payment().get(payment_id)["response"]["status"]
             if mp_status == "approved":
                 return jsonify({"status": "active"})
