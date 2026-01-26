@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <title>Últimos PIX</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        table { border-collapse: collapse; width: 100%; }
+        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+        th { background-color: #f2f2f2; }
+        tr:nth-child(even) { background-color: #f9f9f9; }
+    </style>
+</head>
+<body>
+    <h1>Últimos 30 PIX</h1>
+    <table>
+        <thead>
+            <tr>
+                <th>Data Pagamento</th>
+                <th>UUID</th>
+                <th>Email</th>
+                <th>Valor</th>
+                <th>Status</th>
+                <th>ID Transação</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for p in pagamentos %}
+            <tr>
+                <td>{{ p.data_pagamento }}</td>
+                <td>{{ p.uuid }}</td>
+                <td>{{ p.email }}</td>
+                <td>{{ p.valor }}</td>
+                <td>{{ p.status }}</td>
+                <td>{{ p.payment_id }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</body>
+</html>
