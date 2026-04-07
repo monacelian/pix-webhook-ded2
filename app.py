@@ -20,9 +20,6 @@ def get_db():
 
 # ----------------- FUNÇÃO PARA PEGAR ÚLTIMO PAGAMENTO -----------------
 def get_ultimo_pagamento_valido(uuid):
-    """
-    Retorna o último pagamento válido para o UUID, priorizando approved.
-    """
     try:
         conn = get_db()
         cur = conn.cursor()
@@ -38,18 +35,52 @@ def get_ultimo_pagamento_valido(uuid):
         row = cur.fetchone()
         cur.close()
         conn.close()
-        return row  # (payment_id, status, valid_until) ou None
+        return row
     except Exception as e:
         print("Erro ao consultar pagamento:", e)
         return None
+
+# ----------------- NOVA FUNÇÃO -----------------
+def pagamento_ja_ativo(email, uuid):
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT 1
+            FROM pagamentos
+            WHERE email = %s
+              AND uuid = %s
+              AND status = 'approved'
+              AND valid_until > %s
+            LIMIT 1
+        """, (email, uuid, datetime.utcnow()))
+
+        existe = cur.fetchone()
+
+        cur.close()
+        conn.close()
+
+        return existe is not None
+
+    except Exception as e:
+        print("Erro ao verificar pagamento existente:", e)
+        return False
 
 # ----------------- GERAR PIX -----------------
 @app.route("/gerar_pix")
 def gerar_pix():
     email = request.args.get("email")
     uuid = request.args.get("uuid")
+
     if not email or not uuid:
         return jsonify({"error": "Email ou UUID não fornecido"}), 400
+
+    # 🔒 VERIFICA SE JÁ PAGOU NESSE DISPOSITIVO
+    if pagamento_ja_ativo(email, uuid):
+        return jsonify({
+            "status": "active",
+            "ja_pago": True
+        })
 
     payment_data = {
         "transaction_amount": 1.0,
@@ -124,12 +155,10 @@ def webhook():
     if p["status"] != "approved":
         return "OK", 200
 
-    # Atualiza pagamento aprovado e remove pendentes
     try:
         conn = get_db()
         cur = conn.cursor()
 
-        # 1️⃣ Atualiza status do pagamento aprovado
         cur.execute("""
             UPDATE pagamentos
             SET status = %s, valid_until = %s
@@ -140,12 +169,11 @@ def webhook():
             str(payment_id)
         ))
 
-        # 2️⃣ Apaga todos os pagamentos pendentes do mesmo UUID
-        # Primeiro precisamos buscar o UUID do pagamento aprovado
         cur.execute("""
             SELECT uuid FROM pagamentos WHERE payment_id = %s
         """, (payment_id,))
         row = cur.fetchone()
+
         if row:
             uuid = row[0]
             cur.execute("""
@@ -158,7 +186,6 @@ def webhook():
         conn.close()
     except Exception as e:
         print("❌ Erro ao atualizar/apagar pagamentos no webhook:", e)
-        pass
 
     return "OK", 200
 
@@ -166,6 +193,7 @@ def webhook():
 @app.route("/checar_pagamento")
 def checar_pagamento():
     uuid = request.args.get("uuid")
+
     if not uuid:
         return jsonify({"error": "UUID não fornecido"}), 400
 
@@ -177,11 +205,11 @@ def checar_pagamento():
 
         payment_id, status, valid_until = pagamento
 
-        # Consulta o Mercado Pago apenas se status não for approved ou expirado
         if status == "approved" and valid_until > datetime.utcnow():
             return jsonify({"status": "active"})
         else:
             mp_status = mp.payment().get(payment_id)["response"]["status"]
+
             if mp_status == "approved":
                 return jsonify({"status": "active"})
             elif mp_status == "pending":
