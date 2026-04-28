@@ -3,7 +3,7 @@ from flask_cors import CORS
 import mercadopago
 import os
 import psycopg2
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 app = Flask(__name__)
 CORS(app)
@@ -18,75 +18,54 @@ mp = mercadopago.SDK(MP_ACCESS_TOKEN)
 def get_db():
     return psycopg2.connect(DATABASE_URL)
 
-
 # ----------------- FUNÇÃO PARA PEGAR ÚLTIMO PAGAMENTO -----------------
 def get_ultimo_pagamento_valido(uuid):
     """
-    Retorna o último pagamento válido para o UUID,
-    priorizando approved.
+    Retorna o último pagamento válido para o UUID, priorizando approved.
     """
     try:
         conn = get_db()
         cur = conn.cursor()
-
         cur.execute("""
             SELECT payment_id, status, valid_until
             FROM pagamentos
             WHERE uuid = %s
             ORDER BY
-                CASE
-                    WHEN status = 'approved' THEN 1
-                    ELSE 2
-                END,
+                CASE WHEN status = 'approved' THEN 1 ELSE 2 END,
                 data_pagamento DESC
             LIMIT 1
         """, (uuid,))
-
         row = cur.fetchone()
-
         cur.close()
         conn.close()
-
         return row  # (payment_id, status, valid_until) ou None
-
     except Exception as e:
         print("Erro ao consultar pagamento:", e)
         return None
 
-
 # ----------------- GERAR PIX -----------------
 @app.route("/gerar_pix")
 def gerar_pix():
-
     email = request.args.get("email")
     uuid = request.args.get("uuid")
 
     if not email or not uuid:
-        return jsonify({
-            "error": "Email ou UUID não fornecido"
-        }), 400
+        return jsonify({"error": "Email ou UUID não fornecido"}), 400
 
     payment_data = {
         "transaction_amount": 1.0,
         "description": "Pagamento Pix DedMais",
         "payment_method_id": "pix",
-        "payer": {
-            "email": email
-        },
+        "payer": {"email": email},
     }
 
     try:
         payment = mp.payment().create(payment_data)
-
     except Exception as e:
-        return jsonify({
-            "error": f"Erro ao criar pagamento no MP: {str(e)}"
-        }), 500
+        return jsonify({"error": f"Erro ao criar pagamento no MP: {str(e)}"}), 500
 
     if payment["status"] != 201:
-        return jsonify({
-            "error": "Erro ao criar pagamento"
-        }), 500
+        return jsonify({"error": "Erro ao criar pagamento"}), 500
 
     result = payment["response"]
 
@@ -105,17 +84,14 @@ def gerar_pix():
     )
 
     if not pix_payload or not qr_base64:
-        return jsonify({
-            "error": "Não foi possível gerar Pix"
-        }), 500
+        return jsonify({"error": "Não foi possível gerar Pix"}), 500
 
     try:
         conn = get_db()
         cur = conn.cursor()
 
         cur.execute("""
-            INSERT INTO pagamentos
-            (
+            INSERT INTO pagamentos (
                 payment_id,
                 email,
                 uuid,
@@ -131,19 +107,16 @@ def gerar_pix():
             uuid,
             result["transaction_amount"],
             "pending",
-            datetime.utcnow() + timedelta(minutes=30),
-            datetime.utcnow()
+            datetime.now(timezone.utc) + timedelta(minutes=30),
+            datetime.now(timezone.utc)
         ))
 
         conn.commit()
-
         cur.close()
         conn.close()
 
     except Exception as e:
-        return jsonify({
-            "error": f"Erro ao salvar no banco: {str(e)}"
-        }), 500
+        return jsonify({"error": f"Erro ao salvar no banco: {str(e)}"}), 500
 
     return jsonify({
         "payment_id": result["id"],
@@ -152,11 +125,9 @@ def gerar_pix():
         "valor": result["transaction_amount"]
     })
 
-
 # ----------------- WEBHOOK -----------------
 @app.route("/webhook", methods=["POST"])
 def webhook():
-
     data = request.json or {}
     payment_id = None
 
@@ -175,110 +146,95 @@ def webhook():
     if p["status"] != "approved":
         return "OK", 200
 
-    # Atualiza pagamento aprovado e remove pendentes
     try:
         conn = get_db()
         cur = conn.cursor()
 
-        # 1️⃣ Atualiza status do pagamento aprovado
+        # Atualiza pagamento aprovado
         cur.execute("""
             UPDATE pagamentos
-            SET
-                status = %s,
+            SET status = %s,
                 valid_until = %s
             WHERE payment_id = %s
         """, (
             "approved",
-            datetime.utcnow() + timedelta(days=30),
+            datetime.now(timezone.utc) + timedelta(days=30),
             str(payment_id)
         ))
 
-        # 2️⃣ Busca UUID do pagamento aprovado
+        # Busca UUID do pagamento aprovado
         cur.execute("""
             SELECT uuid
             FROM pagamentos
             WHERE payment_id = %s
-        """, (payment_id,))
+        """, (str(payment_id),))
 
         row = cur.fetchone()
 
+        # Remove pagamentos pendentes do mesmo UUID
         if row:
             uuid = row[0]
 
-            # Remove pendentes do mesmo UUID
             cur.execute("""
                 DELETE FROM pagamentos
                 WHERE uuid = %s
-                AND status = 'pending'
-            """, (uuid,))
+                  AND status = 'pending'
+                  AND payment_id != %s
+            """, (uuid, str(payment_id)))
 
         conn.commit()
-
         cur.close()
         conn.close()
 
     except Exception as e:
         print("❌ Erro ao atualizar/apagar pagamentos no webhook:", e)
-        pass
 
     return "OK", 200
-
 
 # ----------------- CHECAR STATUS -----------------
 @app.route("/checar_pagamento")
 def checar_pagamento():
-
     uuid = request.args.get("uuid")
 
     if not uuid:
-        return jsonify({
-            "error": "UUID não fornecido"
-        }), 400
+        return jsonify({"error": "UUID não fornecido"}), 400
 
     try:
         pagamento = get_ultimo_pagamento_valido(uuid)
 
         if not pagamento:
-            return jsonify({
-                "status": "none"
-            })
+            return jsonify({"status": "none"})
 
         payment_id, status, valid_until = pagamento
 
-        # Consulta Mercado Pago apenas se necessário
-        if status == "approved" and valid_until > datetime.utcnow():
+        agora = datetime.now(timezone.utc)
 
+        # Corrige caso o PostgreSQL retorne datetime naive
+        if valid_until.tzinfo is None:
+            valid_until = valid_until.replace(tzinfo=timezone.utc)
+
+        # Se já estiver aprovado e válido
+        if status == "approved" and valid_until > agora:
             return jsonify({
-                "status": "active"
+                "status": "active",
+                "valid_until": valid_until.isoformat()
             })
 
+        # Consulta Mercado Pago
+        mp_status = mp.payment().get(payment_id)["response"]["status"]
+
+        if mp_status == "approved":
+            return jsonify({"status": "active"})
+
+        elif mp_status == "pending":
+            return jsonify({"status": "pending"})
+
         else:
-            mp_status = mp.payment().get(payment_id)["response"]["status"]
-
-            if mp_status == "approved":
-                return jsonify({
-                    "status": "active"
-                })
-
-            elif mp_status == "pending":
-                return jsonify({
-                    "status": "pending"
-                })
-
-            else:
-                return jsonify({
-                    "status": "expired"
-                })
+            return jsonify({"status": "expired"})
 
     except Exception as e:
-        return jsonify({
-            "error": str(e)
-        }), 500
-
+        return jsonify({"error": str(e)}), 500
 
 # ----------------- START -----------------
 if __name__ == "__main__":
-    app.run(
-        host="0.0.0.0",
-        port=5000
-    )
+    app.run(host="0.0.0.0", port=5000)
